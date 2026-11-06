@@ -1,0 +1,9 @@
+node_modules
+**/dist
+.git
+data
+**/*.sqlite
+**/*.sqlite-*
+.env
+*.log
+.vite
