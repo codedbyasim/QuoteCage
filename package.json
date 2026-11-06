@@ -1,0 +1,15 @@
+{
+  "name": "quotecage",
+  "private": true,
+  "workspaces": [
+    "apps/api",
+    "apps/web"
+  ],
+  "scripts": {
+    "test": "npm test -w @quotecage/api",
+    "typecheck": "npm run typecheck -w @quotecage/api && npm run typecheck -w @quotecage/web",
+    "build": "npm run build -w @quotecage/api && npm run build -w @quotecage/web",
+    "dev:api": "npm run dev -w @quotecage/api",
+    "dev:web": "npm run dev -w @quotecage/web"
+  }
+}

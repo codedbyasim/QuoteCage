@@ -1,0 +1,138 @@
+{
+  "items": [
+    {
+      "sku": "a4-ream",
+      "name": "A4 multipurpose paper",
+      "unit": "ream",
+      "detail": "500 sheets, 80 gsm, bright white",
+      "aliases": ["a4 paper", "a4", "copy paper", "multipurpose paper"]
+    },
+    {
+      "sku": "hp-26a",
+      "name": "HP 26A black toner",
+      "unit": "each",
+      "detail": "Original HP CF226A",
+      "aliases": ["toner hp 26a", "hp 26a", "26a", "cf226a"]
+    },
+    {
+      "sku": "chair-task",
+      "name": "Task chair",
+      "unit": "each",
+      "detail": "Mesh back, adjustable arms, 5-star base",
+      "aliases": ["office chair", "office chairs", "task chair", "chair"]
+    },
+    {
+      "sku": "card-12x18",
+      "name": "12×18 cardstock",
+      "unit": "pack",
+      "detail": "250 sheets, 80 lb cover",
+      "aliases": ["cardstock", "12x18", "12×18", "cover stock"]
+    },
+    {
+      "sku": "toner-cyan",
+      "name": "Cyan toner",
+      "unit": "each",
+      "detail": "Compatible cyan cartridge",
+      "aliases": ["cyan toner", "cyan"]
+    },
+    {
+      "sku": "box-12",
+      "name": "12×12 shipping box",
+      "unit": "each",
+      "detail": "Corrugated mailer, pack of one",
+      "aliases": ["shipping box", "shipping boxes", "mailer", "12x12"]
+    }
+  ],
+  "samples": [
+    {
+      "id": "office",
+      "title": "Office restock",
+      "blurb": "Paper, toner, and chairs for a small office.",
+      "bom": "A4 paper 10 reams, toner HP 26A x2, office chairs x4"
+    },
+    {
+      "id": "print",
+      "title": "Print shop",
+      "blurb": "Cardstock, cyan toner, and mailer boxes.",
+      "bom": "12×18 cardstock x4\nCyan toner x2\nShipping boxes 12×12 x20"
+    }
+  ],
+  "vendors": [
+    {
+      "id": "reedmill",
+      "name": "Reed & Mill",
+      "host": "reedmill.fixtures",
+      "tagline": "Paper merchants since 1978",
+      "city": "Fixture City",
+      "shippingLabel": "Flat parcel rate",
+      "tainted": false,
+      "shipping": { "type": "flat", "amountCents": 1200, "label": "Flat parcel rate" },
+      "fees": [],
+      "prices": {
+        "a4-ream": { "priceCents": 640, "stock": "in_stock", "note": "House brand, 500 sheets" },
+        "hp-26a": { "priceCents": 7800, "stock": "in_stock", "note": "Original cartridge, in the cage today" },
+        "chair-task": { "priceCents": 18900, "stock": "in_stock", "note": "Ships from the warehouse in 5 days" },
+        "card-12x18": { "priceCents": 2800, "stock": "in_stock", "note": "80 lb cover, 250 sheets" },
+        "toner-cyan": { "priceCents": 8400, "stock": "in_stock", "note": "Sealed box" },
+        "box-12": { "priceCents": 140, "stock": "in_stock", "note": "Sold each" }
+      }
+    },
+    {
+      "id": "brightcartridge",
+      "name": "Bright Cartridge",
+      "host": "brightcartridge.fixtures",
+      "tagline": "Toner, ink, and honest stock counts",
+      "city": "Fixture City",
+      "shippingLabel": "Ground, free over $100",
+      "tainted": false,
+      "shipping": { "type": "threshold", "freeOverCents": 10000, "underCents": 950, "label": "Ground, free over $100" },
+      "fees": [],
+      "prices": {
+        "a4-ream": { "priceCents": 710, "stock": "in_stock", "note": "Case-cut reams" },
+        "hp-26a": { "priceCents": 6450, "stock": "in_stock", "note": "Original HP, tested" },
+        "chair-task": { "priceCents": 17200, "stock": "out_of_stock", "note": "Next inbound date not posted" },
+        "card-12x18": { "priceCents": 2450, "stock": "in_stock", "note": "Cover stock, 250 sheets" },
+        "toner-cyan": { "priceCents": 7100, "stock": "in_stock", "note": "High-yield compatible" },
+        "box-12": { "priceCents": 115, "stock": "in_stock", "note": "Kraft mailer" }
+      }
+    },
+    {
+      "id": "oakline",
+      "name": "Oakline Interiors",
+      "host": "oakline.fixtures",
+      "tagline": "Seating, and the supplies that ride along",
+      "city": "Fixture City",
+      "shippingLabel": "Scheduled freight",
+      "tainted": false,
+      "shipping": { "type": "flat", "amountCents": 2500, "label": "Scheduled freight" },
+      "fees": [],
+      "prices": {
+        "a4-ream": { "priceCents": 925, "stock": "in_stock", "note": "Not their specialty — priced as a convenience" },
+        "hp-26a": { "priceCents": 9100, "stock": "in_stock", "note": "Special order, in stock this week" },
+        "chair-task": { "priceCents": 14900, "stock": "in_stock", "note": "Floor model spec, new in box" },
+        "card-12x18": { "priceCents": 3600, "stock": "in_stock", "note": "Studio leftover, full packs" },
+        "toner-cyan": { "priceCents": 9800, "stock": "out_of_stock", "note": "Not carried this month" },
+        "box-12": { "priceCents": 180, "stock": "in_stock", "note": "Used for furniture returns" }
+      }
+    },
+    {
+      "id": "quickquote",
+      "name": "QuickQuote Depot",
+      "host": "quickquote.fixtures",
+      "tagline": "Warehouse stickers. Read the cart.",
+      "city": "Fixture City",
+      "shippingLabel": "Shipping (advertised)",
+      "tainted": true,
+      "shipping": { "type": "flat", "amountCents": 0, "label": "Shipping (advertised)" },
+      "fees": [{ "label": "Processing fee", "amountCents": 4500 }],
+      "prices": {
+        "a4-ream": { "priceCents": 590, "stock": "in_stock", "note": "Banner price" },
+        "hp-26a": { "priceCents": 5900, "stock": "in_stock", "note": "Banner price" },
+        "chair-task": { "priceCents": 13900, "stock": "in_stock", "note": "Banner price" },
+        "card-12x18": { "priceCents": 2200, "stock": "in_stock", "note": "Banner price" },
+        "toner-cyan": { "priceCents": 6600, "stock": "in_stock", "note": "Banner price" },
+        "box-12": { "priceCents": 95, "stock": "in_stock", "note": "Banner price" }
+      }
+    }
+  ]
+}
