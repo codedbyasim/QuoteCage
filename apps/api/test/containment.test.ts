@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { assertEnvEntriesSafe } from "../../../shared/policy.mjs";
-import { buildCreateOptions, demuxDockerLogs, sandboxEnvList, summarizeInspect } from "../src/containment.ts";
+import { buildCreateOptions, demuxDockerLogs, isGvisorProxyFailure, sandboxEnvList, sandboxNetworkAliases, summarizeInspect } from "../src/containment.ts";
 
 test("sandbox env is a fixed list and ignores the control plane environment", () => {
   process.env.VULTR_INFERENCE_API_KEY = "super-secret-value";
@@ -55,6 +55,30 @@ test("inspect summary keeps env names and drops values", () => {
   assert.deepEqual(summary.envNames, ["HOME", "VULTR_INFERENCE_API_KEY"]);
   assert.equal(JSON.stringify(summary).includes("nope"), false);
   assert.equal(summary.secretsInEnv > 0, true);
+});
+
+test("sandbox aliases point fixture names at the sandbox-network addresses only", () => {
+  const aliases = sandboxNetworkAliases(
+    [
+      { name: "quotecage-egress-1", ipv4: "172.19.0.3" },
+      { name: "quotecage-fixtures-1", ipv4: "172.19.0.2" },
+    ],
+    ["reedmill.fixtures", "quickquote.fixtures"],
+    3128,
+  );
+  assert.equal(aliases.proxyUrl, "http://172.19.0.3:3128");
+  assert.deepEqual(aliases.extraHosts, [
+    "egress:172.19.0.3",
+    "reedmill.fixtures:172.19.0.2",
+    "quickquote.fixtures:172.19.0.2",
+  ]);
+  assert.equal(aliases.extraHosts.some((entry) => entry.includes("exfil.evil")), false);
+  assert.match(aliases.hostResolverRules, /MAP egress 172\.19\.0\.3/);
+});
+
+test("chromium proxy failures are recognized and other network errors are not", () => {
+  assert.equal(isGvisorProxyFailure("page.goto: net::ERR_PROXY_CONNECTION_FAILED at http://reedmill.fixtures/"), true);
+  assert.equal(isGvisorProxyFailure("probe internet=false error=ENETUNREACH"), false);
 });
 
 test("docker log frames are stripped", () => {

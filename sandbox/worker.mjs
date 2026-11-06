@@ -99,9 +99,11 @@ try {
   };
   log(`probe internet=${direct.reachable} fixture=${fixture.reachable}`);
 
+  const launchArgs = ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu", "--disable-features=AsyncDns"];
+  if (task.hostResolverRules) launchArgs.push(`--host-resolver-rules=${task.hostResolverRules}`);
   browser = await chromium.launch({
     headless: true,
-    args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+    args: launchArgs,
   });
   const context = await browser.newContext({
     viewport: { width: 1280, height: 800 },

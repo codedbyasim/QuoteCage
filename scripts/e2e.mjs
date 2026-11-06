@@ -85,6 +85,11 @@ const audit = await (await fetch(`${base}/api/runs/${id}/audit`)).json();
 assert(audit.schema === "quotecage.audit.v1", "audit schema");
 assert(!JSON.stringify(audit).includes("VULTR_INFERENCE_API_KEY="), "audit contained a key assignment");
 
-const leftover = execFileSync("sudo", ["docker", "ps", "-aq", "--filter", "label=quotecage.role=sandbox"], { encoding: "utf8" }).trim();
-assert(leftover === "", `sandbox containers still present:\n${leftover}`);
+const localDocker = ["127.0.0.1", "localhost", "::1"].includes(new URL(base).hostname);
+if (localDocker) {
+  const leftover = execFileSync("sudo", ["docker", "ps", "-aq", "--filter", "label=quotecage.role=sandbox"], { encoding: "utf8" }).trim();
+  assert(leftover === "", `sandbox containers still present:\n${leftover}`);
+} else {
+  console.log("QUOTECAGE_URL is remote; skipping the local docker process check");
+}
 console.log(`e2e ok ${base}/app/${id}`);

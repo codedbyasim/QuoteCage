@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { gvisorProxyFallbackNote, isGvisorProxyFailure, proxyPort } from "./containment.js";
 import { decideEgress, isContactAction } from "../../../shared/policy.mjs";
 import { planFromBom } from "../../../shared/planner.mjs";
 import { arithmeticOk, explainRecommendation, formatUsd, recommend } from "../../../shared/quote-math.mjs";
@@ -11,7 +12,7 @@ import { resolveInferenceMode } from "./config.js";
 import { fixtureHosts } from "./catalog.js";
 import type { Repository, RunRow, VendorRunRow } from "./db.js";
 import { planWithModel, verifyWithVision } from "./inference.js";
-import { runSandbox, type DockerLike } from "./runner.js";
+import { lookupSandboxAliases, runSandbox, selectSandboxRuntime, type DockerLike } from "./runner.js";
 import type { Catalog, PlanItem, Quote } from "./types.js";
 export type LiveVendor = { id: string; name: string; baseUrl: string; host: string };
 
@@ -111,8 +112,9 @@ export function createRunService(deps: Deps) {
       repo.updateRun(run);
       emit(repo, runId, "plan_ready", "Shopping list normalized.", { items: plan.items, mode: run.inference.mode });
 
+      const session = await openRuntimeSession(runId);
       for (const target of targetsFor(run)) {
-        await runVendor(runId, target, plan.items);
+        await runVendor(runId, target, plan.items, session);
         const fresh = repo.getRun(runId);
         if (fresh) run = fresh;
       }
@@ -139,7 +141,44 @@ export function createRunService(deps: Deps) {
     }
   }
 
-  async function runVendor(runId: string, target: { vendorId: string; name: string; baseUrl: string; host: string }, items: PlanItem[]) {
+  async function openRuntimeSession(runId: string) {
+    const session = {
+      runtime: config.sandboxRuntime,
+      note: null as string | null,
+      extraHosts: [] as string[],
+      hostResolverRules: "",
+      proxyUrl: config.egressProxy,
+    };
+    if (!deps.docker) return session;
+    const aliases = await lookupSandboxAliases(deps.docker, config.sandboxNetwork, fixtureHosts(catalog), proxyPort(config.egressProxy));
+    session.extraHosts = aliases.extraHosts;
+    session.hostResolverRules = aliases.hostResolverRules;
+    if (aliases.proxyUrl) session.proxyUrl = aliases.proxyUrl;
+    const choice = await selectSandboxRuntime(deps.docker, config.sandboxRuntime, {
+      image: config.sandboxImage,
+      network: config.sandboxNetwork,
+      proxyHost: aliases.proxyHost,
+      proxyPort: proxyPort(config.egressProxy),
+    });
+    session.runtime = choice.runtime;
+    session.note = choice.note;
+    if (choice.note) {
+      emit(repo, runId, "runtime_fallback", choice.note, { requested: config.sandboxRuntime, used: choice.runtime });
+    } else {
+      emit(repo, runId, "runtime_selected", `Sandbox runtime is ${choice.runtime}.`, {
+        runtime: choice.runtime,
+        proxy: session.proxyUrl,
+      });
+    }
+    return session;
+  }
+
+  async function runVendor(
+    runId: string,
+    target: { vendorId: string; name: string; baseUrl: string; host: string },
+    items: PlanItem[],
+    session: { runtime: string; note: string | null; extraHosts: string[]; hostResolverRules: string; proxyUrl: string },
+  ) {
     const row = repo.listVendors(runId).find((vendor) => vendor.vendorId === target.vendorId);
     if (!row) return;
     row.status = "starting";
@@ -160,7 +199,8 @@ export function createRunService(deps: Deps) {
       vendorId: target.vendorId,
       baseUrl: target.baseUrl,
       allowHosts,
-      egressProxy: config.egressProxy,
+      egressProxy: session.proxyUrl,
+      hostResolverRules: session.hostResolverRules,
       items,
     };
     writeFileSync(path.join(taskDir, "task.json"), JSON.stringify(task, null, 2));
@@ -177,27 +217,42 @@ export function createRunService(deps: Deps) {
 
     const hostTask = path.join(config.hostWorkDir, runId, target.vendorId, "task");
     const hostOut = path.join(config.hostWorkDir, runId, target.vendorId, "out");
-    const outcome = await runSandbox(
-      deps.docker,
-      {
-        image: config.sandboxImage,
-        network: config.sandboxNetwork,
-        runtime: config.sandboxRuntime,
-        memoryBytes: config.memoryBytes,
-        cpus: config.cpus,
-        pids: config.pids,
-        taskHostPath: hostTask,
-        outHostPath: hostOut,
-        runId,
-        vendorId: target.vendorId,
-      },
-      config.timeoutMs,
-      (kind, message, data) => emit(repo, runId, kind, message, { vendorId: target.vendorId, ...(data && typeof data === "object" ? data : { detail: data }) }),
-    );
+    let outcome: Awaited<ReturnType<typeof runSandbox>> | null = null;
+    let result: Record<string, unknown> | null = null;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      clearDirectory(outDir);
+      outcome = await runSandbox(
+        deps.docker,
+        {
+          image: config.sandboxImage,
+          network: config.sandboxNetwork,
+          runtime: session.runtime,
+          memoryBytes: config.memoryBytes,
+          cpus: config.cpus,
+          pids: config.pids,
+          taskHostPath: hostTask,
+          outHostPath: hostOut,
+          runId,
+          vendorId: target.vendorId,
+          extraHosts: session.extraHosts,
+        },
+        config.timeoutMs,
+        (kind, message, data) => emit(repo, runId, kind, message, { vendorId: target.vendorId, ...(data && typeof data === "object" ? data : { detail: data }) }),
+      );
+      const resultPath = path.join(outDir, "result.json");
+      result = existsSync(resultPath) ? JSON.parse(readFileSync(resultPath, "utf8")) as Record<string, unknown> : null;
+      const failureText = `${outcome.error || ""}\n${outcome.logs}\n${typeof result?.error === "string" ? result.error : ""}`;
+      if (session.runtime === "runsc" && isGvisorProxyFailure(failureText) && attempt === 0) {
+        session.runtime = "runc";
+        session.note = gvisorProxyFallbackNote("Chromium reported ERR_PROXY_CONNECTION_FAILED");
+        emit(repo, runId, "runtime_fallback", session.note, { vendorId: target.vendorId, requested: "runsc", used: "runc" });
+        continue;
+      }
+      break;
+    }
+    if (!outcome) return;
 
     hashDirectory(repo, runId, target.vendorId, outDir);
-    const resultPath = path.join(outDir, "result.json");
-    const result = existsSync(resultPath) ? JSON.parse(readFileSync(resultPath, "utf8")) as Record<string, unknown> : null;
     row.result = result;
     row.containerId = outcome.containerId;
     row.sandbox = outcome.inspect;
@@ -221,7 +276,7 @@ export function createRunService(deps: Deps) {
         inspect: outcome.inspect,
       });
       containment.secretsInSandbox = Math.max(containment.secretsInSandbox || 0, secrets);
-      containment.runtimeNote = outcome.runtimeNote || containment.runtimeNote;
+      containment.runtimeNote = session.note || outcome.runtimeNote || containment.runtimeNote;
       run.containment = containment;
       repo.updateRun(run);
     }
@@ -406,6 +461,13 @@ function quoteOf(vendor: VendorRunRow): Quote | null {
     tainted: Boolean(result.tainted),
     currency: "USD",
   };
+}
+
+function clearDirectory(dir: string) {
+  if (!existsSync(dir)) return;
+  for (const name of readdirSync(dir)) {
+    rmSync(path.join(dir, name), { force: true, recursive: true });
+  }
 }
 
 function hashDirectory(repo: Repository, runId: string, vendorId: string, dir: string) {

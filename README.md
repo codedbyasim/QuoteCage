@@ -69,7 +69,18 @@ What stops that:
 - **Human gate.** `send_email`, `request_quote`, `checkout`, and `download` stay pending until Approve or Deny. Both outcomes set `executed: false`. Approve writes “recorded, not sent.”
 - **Evidence.** Screenshots and `result.json` are hashed with SHA-256. The run page can download `audit.json` and a ZIP.
 
-Chromium’s own sandbox is disabled inside the container (`--no-sandbox`). The container is the boundary; the browser needs a writable temp directory and cannot hold the privileges its internal sandbox wants. gVisor is optional: set `SANDBOX_RUNTIME=runsc` after `INSTALL_GVISOR=1`. If `runsc` is missing, the run says it used `runc`.
+Chromium’s own sandbox is disabled inside the container (`--no-sandbox`). The container is the boundary; the browser needs a writable temp directory and cannot hold the privileges its internal sandbox wants.
+
+### gVisor
+
+Set `SANDBOX_RUNTIME=runsc` after `INSTALL_GVISOR=1 sudo -E bash deploy/setup-vultr.sh`. The default runtime stays `runc`.
+
+gVisor’s own network stack (netstack) does not see Docker’s DNS at `127.0.0.11`. That address is redirected by iptables in the container’s network namespace, and the sandbox loopback is a different stack, so Chromium reports `ERR_PROXY_CONNECTION_FAILED` before it can open a fixture. Two changes avoid that:
+
+- The setup script registers `runsc` with `--network=host`. In gVisor that means “use the kernel network stack inside the network namespace Docker already created.” It does **not** attach the sandbox to the host’s network. The container is still only on `quotecage_sandbox`, which has no route to the public internet. Restart Docker after the script so the flag is loaded, then `docker compose up -d`.
+- The control plane looks up the egress proxy and the fixture store on that network and gives the browser the proxy’s IP, plus `/etc/hosts` entries and Chromium host-resolver rules. Name lookup does not depend on `127.0.0.11`. The allowlist is unchanged: `exfil.evil` and other non-fixture hosts are still denied.
+
+Before the first vendor, QuoteCage opens a short-lived runsc container and tries to reach the proxy. If that fails, or if a vendor browser still reports `ERR_PROXY_CONNECTION_FAILED`, the run switches to runc and says so on the security timeline. The comparison continues. Limits, the read-only root, dropped capabilities, the internal network, and the secret rule stay the same. gVisor still interposes on the other syscalls when the probe succeeds; only the network stack is the kernel’s, inside Docker’s namespace. That is the [documented](https://gvisor.dev/docs/user_guide/networking/) tradeoff for Docker Compose DNS.
 
 The control plane mounts the Docker socket. That is a trusted admin surface. A bug there is outside the sandbox proof.
 
@@ -132,7 +143,7 @@ A slide outline is in `docs/pitch.md`.
 - Approve does not send email or pay. There is no mailbox and no checkout integration.
 - The Docker socket on the control plane is equivalent to root on the host.
 - One VM and a SQLite file. No accounts beyond an optional shared password, no billing, no SSO.
-- gVisor is best-effort. The default runtime is runc.
+- gVisor’s network passthrough uses the kernel stack inside the sandbox namespace. If runsc cannot reach the proxy, the run says so and uses runc. The default runtime is runc.
 - Fixture prices are made up. They are not quotes from real suppliers.
 
 ## Layout

@@ -24,7 +24,54 @@ export type SandboxSpecInput = {
   outHostPath: string;
   runId: string;
   vendorId: string;
+  extraHosts?: string[];
 };
+
+const IPV4 = /^\d{1,3}(\.\d{1,3}){3}$/;
+
+export function proxyPort(proxyUrl: string): number {
+  try {
+    const port = new URL(proxyUrl).port;
+    return port ? Number(port) : 3128;
+  } catch {
+    return 3128;
+  }
+}
+
+export function sandboxNetworkAliases(
+  containers: { name: string; ipv4: string }[],
+  fixtureHosts: string[],
+  port: number,
+) {
+  const egress = containers.find((container) => container.name.includes("egress") && IPV4.test(container.ipv4));
+  const fixtures = containers.find((container) => container.name.includes("fixtures") && IPV4.test(container.ipv4));
+  const extraHosts: string[] = [];
+  const rules: string[] = [];
+  if (egress) {
+    extraHosts.push(`egress:${egress.ipv4}`);
+    rules.push(`MAP egress ${egress.ipv4}`);
+  }
+  if (fixtures) {
+    for (const host of fixtureHosts) {
+      extraHosts.push(`${host}:${fixtures.ipv4}`);
+      rules.push(`MAP ${host} ${fixtures.ipv4}`);
+    }
+  }
+  return {
+    extraHosts,
+    hostResolverRules: rules.join(", "),
+    proxyUrl: egress ? `http://${egress.ipv4}:${port}` : null,
+    proxyHost: egress?.ipv4 ?? null,
+  };
+}
+
+export function isGvisorProxyFailure(text: string): boolean {
+  return /ERR_PROXY_CONNECTION_FAILED|ERR_TUNNEL_CONNECTION_FAILED/.test(text);
+}
+
+export function gvisorProxyFallbackNote(detail: string): string {
+  return `gVisor (runsc) could not reach the egress proxy (${detail}). QuoteCage continued with runc so this comparison can finish. The sandbox stays on the internal network with the same allowlist, limits, and secret rules. Re-run deploy/setup-vultr.sh with INSTALL_GVISOR=1 so runsc is registered with --network=host, then restart Docker.`;
+}
 
 export function buildCreateOptions(input: SandboxSpecInput) {
   const env = sandboxEnvList();
@@ -62,6 +109,7 @@ export function buildCreateOptions(input: SandboxSpecInput) {
         "/tmp": "rw,nosuid,nodev,size=512m",
       },
       Binds: [`${input.taskHostPath}:/task:ro`, `${input.outHostPath}:/out:rw`],
+      ...(input.extraHosts && input.extraHosts.length > 0 ? { ExtraHosts: input.extraHosts } : {}),
     },
   };
 }
