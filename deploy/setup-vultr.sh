@@ -83,6 +83,19 @@ net.bridge.bridge-nf-call-ip6tables=0
 EOF
 sysctl --system >/dev/null 2>&1 || true
 
+# Docker 29 writes its filter rules with iptables-nft. A leftover
+# iptables-legacy FORWARD policy of DROP, from an older Docker on the same
+# host, still runs and drops the packet after nft accepts it. Container
+# traffic to the public internet then hangs (the egress CONNECT never
+# returns) even though fixture hosts on the sandbox bridge still work.
+if command -v iptables-legacy >/dev/null 2>&1; then
+  legacy_policy=$(iptables-legacy -S FORWARD 2>/dev/null | awk 'NR==1 { print $3 }')
+  if [ "$legacy_policy" = "DROP" ]; then
+    echo "Clearing a stale iptables-legacy FORWARD DROP so sandboxes can reach allowlisted sites."
+    iptables-legacy -P FORWARD ACCEPT || true
+  fi
+fi
+
 if [ ! -f .env ]; then
   cp .env.example .env
   sed -i 's/^HTTP_PORT=.*/HTTP_PORT=80/' .env

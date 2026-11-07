@@ -1,0 +1,38 @@
+{
+  "assetSuffixes": ["gstatic.com", "googleapis.com"],
+  "exampleBom": "HP 26A toner",
+  "stores": [
+    {
+      "id": "quill",
+      "name": "Quill",
+      "blurb": "Office supplies. Search results showed prices from this network.",
+      "url": "https://www.quill.com/",
+      "search": "https://www.quill.com/search?keywords={query}",
+      "hosts": ["quill.com"]
+    },
+    {
+      "id": "cdw",
+      "name": "CDW",
+      "blurb": "Business technology. Toner search results showed prices from this network.",
+      "url": "https://www.cdw.com/",
+      "search": "https://www.cdw.com/search/?key={query}",
+      "hosts": ["cdw.com"]
+    },
+    {
+      "id": "ikea",
+      "name": "IKEA",
+      "blurb": "Furniture. Chair search prices load from IKEA's own search host.",
+      "url": "https://www.ikea.com/us/en/",
+      "search": "https://www.ikea.com/us/en/search/products/?q={query}",
+      "hosts": ["ikea.com", "ikea.net", "cdtapps.com", "ingka.com"]
+    },
+    {
+      "id": "jampaper",
+      "name": "JAM Paper",
+      "blurb": "Paper and cardstock. Prices render through its storefront and search host.",
+      "url": "https://www.jampaper.com/",
+      "search": "https://www.jampaper.com/search?q={query}",
+      "hosts": ["jampaper.com", "shopify.com", "shopifycdn.com", "shop.app", "athoscommerce.net"]
+    }
+  ]
+}

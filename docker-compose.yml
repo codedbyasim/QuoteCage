@@ -84,7 +84,11 @@ services:
       EGRESS_ALLOW_HOSTS: reedmill.fixtures,brightcartridge.fixtures,oakline.fixtures,quickquote.fixtures
     volumes:
       - /var/quotecage/allow:/allow:ro
-    networks: [app, sandbox]
+    networks:
+      app:
+        priority: 1000
+      sandbox:
+        priority: 1
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3128/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 5s

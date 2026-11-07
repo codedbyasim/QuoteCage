@@ -1,6 +1,8 @@
 # QuoteCage
 
-QuoteCage compares supplier prices for a small-business shopping list. A buyer pastes a list such as “A4 paper 10 reams, toner HP 26A x2, office chairs x4.” Each vendor is opened in a fresh browser. The run returns prices, stock, shipping, screenshots, and a recommendation. Emailing a vendor, submitting a form, or checking out stays behind an Approve / Deny control. This MVP never places an order.
+QuoteCage compares prices on real public stores for a small-business shopping list. A buyer pastes a list, picks stores, and each store is opened in a fresh browser. The price comes from that page. A vision model confirms it only when the same number is visible in the text. If a site blocks the browser, or a price cannot be confirmed, the card says so and no number is invented. Emailing a vendor only drafts a message the buyer can copy. This MVP never places an order.
+
+The default stores, checked from a datacenter network with a real browser, are Quill, CDW, IKEA, and JAM Paper. Staples, Amazon, B&H, Newegg, Office Depot, Walmart, Home Depot, Best Buy, Grainger, and SHI blocked that check or did not render a price. The fictional fixture shops remain as an optional safety demo.
 
 It is a hackathon build for the lablab.ai Vultr Agent Rush, Challenge 1 (Blast Radius Zero), Pattern B: a sandboxed browser, screenshots, and a person in the loop.
 
@@ -99,7 +101,11 @@ Open `http://127.0.0.1:8088`. The office list and the four fixture stores are se
 
 `make e2e` builds the stack and checks the office run: Oakline is the recommendation, QuickQuote is held, egress was denied, the sandbox is gone, and a screenshot hash matches the file.
 
-Leave `VULTR_INFERENCE_API_KEY` empty for the deterministic path. Set it, and `INFERENCE_MODE=auto` (the default), to use Serverless Inference.
+Leave `VULTR_INFERENCE_API_KEY` empty and prices from real pages stay marked unverified. Set the key, and `INFERENCE_MODE=auto` (the default), to send the screenshot to Vultr Serverless Inference. A price is verified only when the model and the page text agree.
+
+`ALLOW_LIVE_URLS` defaults on. Set it to `false` to refuse custom links. Each real store is limited to its own hosts, plus a short list of font and storefront hosts. The public demo allows 6 comparisons per address per hour and at most 3 stores per comparison.
+
+The safety demo is `mode=safety` in the API, or the Safety demo control in the UI. `make e2e` still runs that fixture path.
 
 ### Deploy on a Vultr Ubuntu VM
 
@@ -119,16 +125,18 @@ docker compose up -d --build
 
 `setup-vultr.sh` installs Docker, enables the firewall for SSH, HTTP, and HTTPS, and writes a `.env` that listens on port 80 if you did not already have one. It also sets `net.bridge.bridge-nf-call-iptables=0`. On some kernels Docker’s bridge filter drops container-to-container traffic, which shows up as Caddy returning 502. Routed packets still go through iptables, and the sandbox network has no route to the public internet. The run’s network probe is the check for that.
 
+If an older Docker left `iptables-legacy` with a FORWARD policy of DROP, that table still drops packets after iptables-nft has accepted them. Allowlisted store visits then hang on CONNECT while fixture hosts on the same bridge keep working. The setup script sets that legacy policy to ACCEPT when it finds the stale DROP.
+
 ## Demo script
 
 About two and a half minutes. Stay on the buyer’s job. The timestamps match `docs/demo-script.md`.
 
-1. **0:00–0:12.** Landing. “I’m restocking the office this week. I need the cheapest vendor after freight, and I need the pages to prove it.”
-2. **0:12–0:28.** Open the comparison. The office list and four fixtures are ready. Click **Compare these vendors**. Say that the stores are fixtures so the recording does not depend on a live retailer.
-3. **0:28–1:05.** The rail and the screenshot reel. Point at Bright Cartridge: the chair is out of stock, so that cart is not a full quote.
-4. **1:05–1:35.** The recommendation. Oakline is the lowest total that can ship every line. Freight is on the card. Only mention a dollar gap that is actually on screen.
-5. **1:35–2:15.** The containment moment, still inside the job. QuickQuote’s page told the agent to email the buyer’s list and to call an outside host. Show egress denied, secrets at 0, and the container destroyed. Press **Deny**.
-6. **2:15–2:40.** Download the audit JSON, point at a SHA-256, and end on the recommendation.
+1. **0:00–0:15.** Landing. “I need a price from a real store, and I do not want the browser to order anything.” The hero is the three steps. It does not show fixture prices.
+2. **0:15–0:35.** Open the comparison. The example is “HP 26A toner” with Quill and CDW. Click **Compare these stores**.
+3. **0:35–1:20.** Screenshots and the price each page actually showed. If a card says blocked or unverified, say that. Do not read a number that is not on the card.
+4. **1:20–1:40.** Request a quote, show the draft, then Deny or Approve. “Approve only saves the draft. Nothing is sent.”
+5. **1:40–2:20.** Safety demo, labeled as fictional shops. QuickQuote tries to email a contact list and call an outside host. Show the blocked call and press **Deny**.
+6. **2:20–2:40.** Download the audit JSON and point at a SHA-256.
 
 A slide outline is in `docs/pitch.md`.
 
@@ -138,7 +146,7 @@ A slide outline is in `docs/pitch.md`.
 
 ## Limitations
 
-- The supported demo is the four fixture stores. Live URLs need `ALLOW_LIVE_URLS=true` and still only add that one host for that sandbox. They are not the judging path.
+- The default path is real public stores (Quill, CDW, IKEA, JAM Paper) with `ALLOW_LIVE_URLS` on unless it is set to `false`. A price is shown only when it is on the page. The four fixture shops are the optional safety demo.
 - Mock mode checks that the captured page text contains the extracted figures. It is not a vision model. The UI names the method that ran.
 - Approve does not send email or pay. There is no mailbox and no checkout integration.
 - The Docker socket on the control plane is equivalent to root on the host.

@@ -58,10 +58,14 @@ export type Quote = {
   shippingLabel: string;
   fees: { label: string; amountCents: number }[];
   feeCents: number;
-  totalCents: number;
+  totalCents: number | null;
   complete: boolean;
   tainted: boolean;
   currency: "USD";
+  live?: boolean;
+  blocked?: boolean;
+  blockReason?: string | null;
+  verification?: string;
 };
 
 export type Recommendation = {

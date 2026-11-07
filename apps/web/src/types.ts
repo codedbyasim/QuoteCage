@@ -19,10 +19,14 @@ export type Quote = {
   shippingLabel: string;
   fees: { label: string; amountCents: number }[];
   feeCents: number;
-  totalCents: number;
+  totalCents: number | null;
   complete: boolean;
   tainted: boolean;
   currency: "USD";
+  live?: boolean;
+  blocked?: boolean;
+  blockReason?: string | null;
+  verification?: string;
 };
 
 export type SandboxInspect = {
@@ -81,7 +85,7 @@ export type RunView = {
   bomText: string;
   error: string | null;
   plan: { items: PlanItem[]; notes: string } | null;
-  inference: { mode?: string; plannerModel?: string | null; visionModel?: string | null; fallback?: string | null; keyPresent?: boolean } | null;
+  inference: { mode?: string; runMode?: string; plannerModel?: string | null; visionModel?: string | null; fallback?: string | null; keyPresent?: boolean } | null;
   recommendation: {
     cheapestVendorId: string | null;
     cheapestCents: number | null;
