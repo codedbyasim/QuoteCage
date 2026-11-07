@@ -12,6 +12,8 @@ import { resolveInferenceMode } from "./config.js";
 import { fixtureHosts } from "./catalog.js";
 import type { Repository, RunRow, VendorRunRow } from "./db.js";
 import { planWithModel, verifyWithVision } from "./inference.js";
+import { loadRealVendors, resolveLiveTargets, type LiveTarget } from "./live.js";
+import { recommendLive } from "../../../shared/live-extract.mjs";
 import { lookupSandboxAliases, runSandbox, selectSandboxRuntime, type DockerLike } from "./runner.js";
 import type { Catalog, PlanItem, Quote } from "./types.js";
 export type LiveVendor = { id: string; name: string; baseUrl: string; host: string };
@@ -66,13 +68,25 @@ export function createRunService(deps: Deps) {
   const { config, repo, catalog } = deps;
 
   function targetsFor(run: RunRow) {
+    const liveTargets = (run.inference?.liveTargets as LiveTarget[] | undefined) || [];
+    if (run.inference?.runMode === "live") {
+      return liveTargets.map((target) => ({
+        vendorId: target.id,
+        name: target.name,
+        baseUrl: target.baseUrl,
+        host: target.host,
+        live: true,
+        searchTemplate: target.searchTemplate,
+        allowHosts: target.allowHosts,
+      }));
+    }
     const live = ((run.inference?.liveVendors as LiveVendor[] | undefined) || []);
     return run.vendorIds.map((vendorId) => {
       const known = catalog.vendors.find((vendor) => vendor.id === vendorId);
-      if (known) return { vendorId, name: known.name, baseUrl: `http://${known.host}`, host: known.host };
+      if (known) return { vendorId, name: known.name, baseUrl: `http://${known.host}`, host: known.host, live: false, searchTemplate: null as string | null, allowHosts: [] as string[] };
       const extra = live.find((vendor) => vendor.id === vendorId);
       if (!extra) throw httpError(400, `Unknown vendor ${vendorId}.`);
-      return { vendorId: extra.id, name: extra.name, baseUrl: extra.baseUrl, host: extra.host };
+      return { vendorId: extra.id, name: extra.name, baseUrl: extra.baseUrl, host: extra.host, live: true, searchTemplate: null, allowHosts: [] as string[] };
     });
   }
 
@@ -98,6 +112,8 @@ export function createRunService(deps: Deps) {
         }
       }
       const liveVendors = (run.inference?.liveVendors as LiveVendor[] | undefined) || [];
+      const liveTargets = run.inference?.liveTargets;
+      const runMode = run.inference?.runMode;
       run.plan = plan;
       run.inference = {
         mode: requested === "live" && !fallback ? "live" : "mock",
@@ -107,6 +123,8 @@ export function createRunService(deps: Deps) {
         fallback,
         keyPresent: Boolean(config.inferenceKey),
         liveVendors,
+        liveTargets,
+        runMode,
       };
       run.status = "running";
       repo.updateRun(run);
@@ -120,6 +138,26 @@ export function createRunService(deps: Deps) {
       }
 
       const vendors = repo.listVendors(runId);
+      const liveRows = vendors.filter((vendor) => vendor.result?.live);
+      if (liveRows.length > 0) {
+        const live = recommendLive(liveRows.map((vendor) => ({
+          vendorId: vendor.vendorId,
+          name: vendor.name,
+          blocked: Boolean(vendor.result?.blocked),
+          verification: String(vendor.result?.verification || "unverified"),
+          lines: Array.isArray(vendor.result?.lines) ? vendor.result.lines as { query?: string; name?: string; unitPriceCents?: number | null; note?: string }[] : [],
+        })));
+        const first = live.picks[0];
+        const verified = live.picks.length > 0 && live.picks.every((pick) => pick.verification === "verified");
+        run.recommendation = {
+          cheapestVendorId: first?.vendorId ?? null,
+          cheapestCents: first?.priceCents ?? null,
+          bestValueVendorId: verified ? first?.vendorId ?? null : null,
+          bestValueCents: verified ? first?.priceCents ?? null : null,
+          cheapestIsUntrusted: false,
+          summary: live.summary,
+        };
+      } else {
       const quotes = vendors.flatMap((vendor) => {
         const quote = quoteOf(vendor);
         return quote ? [quote] : [];
@@ -128,10 +166,11 @@ export function createRunService(deps: Deps) {
       const nameOf = (id: string) => vendors.find((vendor) => vendor.vendorId === id)?.name || id;
       const recommendation = { ...base, summary: explainRecommendation(quotes, base, nameOf) };
       run.recommendation = recommendation;
+      }
       run.status = "complete";
       run.error = null;
       repo.updateRun(run);
-      emit(repo, runId, "run_complete", recommendation.summary || "Comparison finished.");
+      emit(repo, runId, "run_complete", run.recommendation?.summary || "Comparison finished.");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       run.status = "failed";
@@ -151,8 +190,9 @@ export function createRunService(deps: Deps) {
     };
     if (!deps.docker) return session;
     const aliases = await lookupSandboxAliases(deps.docker, config.sandboxNetwork, fixtureHosts(catalog), proxyPort(config.egressProxy));
-    session.extraHosts = aliases.extraHosts;
-    session.hostResolverRules = aliases.hostResolverRules;
+    const liveRun = repo.getRun(runId)?.inference?.runMode === "live";
+    session.extraHosts = liveRun ? aliases.extraHosts.filter((entry) => entry.startsWith("egress:")) : aliases.extraHosts;
+    session.hostResolverRules = liveRun ? (aliases.proxyHost ? `MAP egress ${aliases.proxyHost}` : "") : aliases.hostResolverRules;
     if (aliases.proxyUrl) session.proxyUrl = aliases.proxyUrl;
     const choice = await selectSandboxRuntime(deps.docker, config.sandboxRuntime, {
       image: config.sandboxImage,
@@ -175,7 +215,7 @@ export function createRunService(deps: Deps) {
 
   async function runVendor(
     runId: string,
-    target: { vendorId: string; name: string; baseUrl: string; host: string },
+    target: { vendorId: string; name: string; baseUrl: string; host: string; live?: boolean; searchTemplate?: string | null; allowHosts?: string[] },
     items: PlanItem[],
     session: { runtime: string; note: string | null; extraHosts: string[]; hostResolverRules: string; proxyUrl: string },
   ) {
@@ -193,7 +233,9 @@ export function createRunService(deps: Deps) {
     mkdirSync(outDir, { recursive: true });
     chmodSync(outDir, 0o777);
 
-    const allowHosts = [...new Set([...fixtureHosts(catalog), target.host])];
+    const allowHosts = target.allowHosts && target.allowHosts.length > 0
+      ? target.allowHosts
+      : [...new Set([...fixtureHosts(catalog), target.host])];
     writeAllowlist(config.allowDir, allowHosts);
     const task = {
       vendorId: target.vendorId,
@@ -201,7 +243,9 @@ export function createRunService(deps: Deps) {
       allowHosts,
       egressProxy: session.proxyUrl,
       hostResolverRules: session.hostResolverRules,
-      items,
+      live: Boolean(target.live),
+      searchTemplate: target.searchTemplate || null,
+      items: target.live ? items.slice(0, 3) : items,
     };
     writeFileSync(path.join(taskDir, "task.json"), JSON.stringify(task, null, 2));
     emit(repo, runId, "egress_allowlist", "Sandbox egress allowlist written.", { vendorId: target.vendorId, hosts: allowHosts });
@@ -236,7 +280,7 @@ export function createRunService(deps: Deps) {
           vendorId: target.vendorId,
           extraHosts: session.extraHosts,
         },
-        config.timeoutMs,
+        target.live ? Math.max(config.timeoutMs, 150000) : config.timeoutMs,
         (kind, message, data) => emit(repo, runId, kind, message, { vendorId: target.vendorId, ...(data && typeof data === "object" ? data : { detail: data }) }),
       );
       const resultPath = path.join(outDir, "result.json");
@@ -318,7 +362,17 @@ export function createRunService(deps: Deps) {
       emit(repo, runId, "approval_required", action.summary, { vendorId: target.vendorId, action: action.type });
     }
 
-    if (result && Number.isInteger(result.totalCents)) {
+    if (result?.live) {
+      const shot = ["search-0.png", "search-1.png", "search-2.png"].find((name) => existsSync(path.join(outDir, name)));
+      row.vision = await verifyLivePage(runId, target.vendorId, result, shot ? path.join(outDir, shot) : null);
+      result.verification = (row.vision as { verification?: string }).verification || "unverified";
+      row.result = result;
+      row.status = result.blocked ? "done" : "done";
+      if (!result.lines || (result.lines as unknown[]).length === 0) {
+        row.status = "failed";
+        if (!row.error) row.error = "The page did not produce a readable result.";
+      }
+    } else if (result && Number.isInteger(result.totalCents)) {
       const quote = quoteOf({ ...row, result } as VendorRunRow);
       if (quote && !arithmeticOk(quote)) {
         result.complete = false;
@@ -378,17 +432,72 @@ export function createRunService(deps: Deps) {
     return vision;
   }
 
+  async function verifyLivePage(runId: string, vendorId: string, result: Record<string, unknown>, shotPath: string | null) {
+    const mode = resolveInferenceMode(config);
+    if (mode !== "live" || !shotPath) {
+      emit(repo, runId, "vision_checked", "No vision model checked this screenshot. Any price is only what was readable as text.", {
+        vendorId,
+        verification: "unverified",
+      });
+      return { verification: "unverified", method: "none", note: "No vision model checked this screenshot." };
+    }
+    try {
+      const png = readFileSync(shotPath);
+      if (png.length > 3_500_000) {
+        return { verification: "unverified", method: "none", note: "The screenshot was too large to send to the vision model." };
+      }
+      const queries = Array.isArray(result.lines) ? (result.lines as { query?: string }[]).map((line) => line.query).filter(Boolean).join(", ") : "";
+      const model = await verifyWithVision(
+        config,
+        png,
+        `The buyer searched for: ${queries || "the shopping list"}. Reply with JSON only: {"match": boolean, "observedTotal": string|null, "notes": string}. observedTotal is a price you can actually see, or null. match is true only when that price is visible. If the page is a bot wall or error, match is false and observedTotal is null. Do not guess.`,
+      );
+      const shown = `${model.observedTotal || ""} ${model.notes || ""}`;
+      const visible = String(result.visibleText || "");
+      const digits = shown.replace(/[^0-9.]/g, "");
+      const confirmed = Boolean(model.match) && digits.length > 0 && (visible.includes(digits) || visible.includes(String(model.observedTotal || "")));
+      const verification = confirmed ? "verified" : "mismatch";
+      emit(repo, runId, "vision_checked", confirmed
+        ? "The vision model and the page text show the same price."
+        : "The vision model did not confirm a price that is also in the page text, so it stays unverified.", {
+        vendorId,
+        verification,
+      });
+      return { verification, method: "vultr_vision", model, note: confirmed ? "Confirmed against the page text." : "Not confirmed against the page text." };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      emit(repo, runId, "vision_checked", "The vision model did not answer, so the price stays unverified.", { vendorId, error: message });
+      return { verification: "unverified", method: "none", note: message };
+    }
+  }
+
   return {
-    create(input: { bomText: string; vendorIds: string[]; liveVendors?: { name?: string; url?: string }[] }) {
+    create(input: { bomText: string; vendorIds?: string[]; vendors?: { id?: string; name?: string; url?: string }[]; liveVendors?: { id?: string; name?: string; url?: string }[]; mode?: string; clientIp?: string }) {
       const bomText = input.bomText.trim();
       if (bomText.length < 1 || bomText.length > 4000) throw httpError(400, "Enter a shopping list under 4000 characters.");
-      const vendorIds = [...new Set(input.vendorIds || [])];
-      if (vendorIds.length < 1 || vendorIds.length > 4) throw httpError(400, "Choose 1 to 4 fixture vendors.");
-      for (const vendorId of vendorIds) {
-        if (!catalog.vendors.some((vendor) => vendor.id === vendorId)) throw httpError(400, `Unknown vendor ${vendorId}.`);
+      if (input.clientIp && config.rateLimitRuns > 0) {
+        const since = new Date(Date.now() - config.rateWindowMs).toISOString();
+        const recent = repo.countRecent(input.clientIp, since);
+        if (recent >= config.rateLimitRuns) {
+          throw httpError(429, `This address has started ${recent} comparisons in the last hour. The public demo pauses there.`);
+        }
       }
-      const liveVendors = (input.liveVendors || []).slice(0, 1).map((vendor) => parseLiveVendor(vendor, config.allowLiveUrls));
-      const ids = [...vendorIds, ...liveVendors.map((vendor) => vendor.id)];
+      const requestedLive = [...(input.vendors || []), ...(input.liveVendors || [])];
+      const safety = input.mode === "safety" || (input.mode !== "live" && requestedLive.length === 0);
+      let ids: string[] = [];
+      let liveTargets: LiveTarget[] = [];
+      if (safety) {
+        ids = [...new Set(input.vendorIds || [])];
+        if (ids.length < 1 || ids.length > 4) throw httpError(400, "Choose 1 to 4 fixture vendors.");
+        for (const vendorId of ids) {
+          if (!catalog.vendors.some((vendor) => vendor.id === vendorId)) throw httpError(400, `Unknown vendor ${vendorId}.`);
+        }
+      } else {
+        if (!config.allowLiveUrls) throw httpError(403, "Real store links are off. Set ALLOW_LIVE_URLS=true.");
+        if (requestedLive.length < 1 || requestedLive.length > 3) throw httpError(400, "Choose 1 to 3 real stores.");
+        liveTargets = resolveLiveTargets(requestedLive, loadRealVendors(), config.allowLiveUrls);
+        ids = liveTargets.map((target) => target.id);
+      }
       const now = new Date().toISOString();
       const id = randomUUID();
       const run: RunRow = {
@@ -399,7 +508,7 @@ export function createRunService(deps: Deps) {
         bomText,
         vendorIds: ids,
         plan: null,
-        inference: { liveVendors },
+        inference: { liveVendors: liveTargets, liveTargets, runMode: safety ? "safety" : "live" },
         recommendation: null,
         containment: {
           sandboxes: [],
@@ -419,7 +528,7 @@ export function createRunService(deps: Deps) {
       repo.insertRun(run);
       for (const vendorId of ids) {
         const known = catalog.vendors.find((vendor) => vendor.id === vendorId);
-        const live = liveVendors.find((vendor) => vendor.id === vendorId);
+        const live = liveTargets.find((vendor) => vendor.id === vendorId);
         const row: VendorRunRow = {
           id: randomUUID(),
           runId: id,
@@ -438,6 +547,7 @@ export function createRunService(deps: Deps) {
         repo.insertVendor(row);
       }
       emit(repo, id, "run_created", "Comparison queued.", { vendors: ids });
+      repo.setClientIp(id, input.clientIp || "");
       enqueue(() => execute(id));
       return id;
     },
@@ -445,7 +555,7 @@ export function createRunService(deps: Deps) {
   };
 }
 
-function quoteOf(vendor: VendorRunRow): Quote | null {
+function quoteOf(vendor: VendorRunRow): (Quote & { totalCents: number }) | null {
   const result = vendor.result;
   if (!result || !Number.isInteger(result.totalCents)) return null;
   return {

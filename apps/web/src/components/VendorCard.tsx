@@ -28,8 +28,22 @@ export function VendorCard({
           {!quote && vendor.status === "failed" ? <span className="badge oxide">No quote</span> : null}
         </div>
       </header>
-      <p className="total">{quote ? formatUsd(quote.totalCents) : vendor.status === "pending" || vendor.status === "starting" ? "Waiting" : "—"}</p>
-      {quote ? (
+      <p className="total">{quote?.live ? liveHeadline(quote) : quote ? formatUsd(quote.totalCents) : vendor.status === "pending" || vendor.status === "starting" ? "Waiting" : "—"}</p>
+      {quote?.live ? (
+        <>
+          {quote.blockReason ? <p>{quote.blockReason}</p> : null}
+          <ul className="line-list">
+            {quote.lines.map((line) => (
+              <li key={`${line.sku}-${line.name}`}>
+                <span>{line.name}</span>
+                <span>{line.unitPriceCents != null ? formatUsd(line.unitPriceCents) : "No price read"}</span>
+                <span className="span-2">{line.note || "Seen on the page"}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="check">{verificationCopy(quote.verification)}</p>
+        </>
+      ) : quote ? (
         <ul className="line-list">
           {quote.lines.map((line) => (
             <li key={`${line.sku}-${line.name}`}>
@@ -67,6 +81,18 @@ export function VendorCard({
       </button>
     </article>
   );
+}
+
+function liveHeadline(quote: { blocked?: boolean; lines: { unitPriceCents: number | null }[] }) {
+  if (quote.blocked) return "Blocked";
+  if (quote.lines.some((line) => line.unitPriceCents != null)) return "Seen on the page";
+  return "No price";
+}
+
+function verificationCopy(verification?: string) {
+  if (verification === "verified") return "A vision model and the page text agree on this price.";
+  if (verification === "mismatch") return "A vision model did not confirm the price in the page text, so it is not verified.";
+  return "Not verified by a vision model. This is only text read from the page, not a cart total.";
 }
 
 function stockWord(stock: string) {

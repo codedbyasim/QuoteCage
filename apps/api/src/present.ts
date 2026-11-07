@@ -2,8 +2,28 @@ import type { Repository } from "./db.js";
 import type { Catalog, Quote, QuoteLine } from "./types.js";
 
 function asQuote(vendorId: string, result: Record<string, unknown> | null): Quote | null {
-  if (!result || !Number.isInteger(result.totalCents)) return null;
+  if (!result) return null;
   const lines = Array.isArray(result.lines) ? (result.lines as QuoteLine[]) : [];
+  if (result.live) {
+    return {
+      vendorId,
+      lines,
+      subtotalCents: 0,
+      shippingCents: 0,
+      shippingLabel: "Not a cart total",
+      fees: [],
+      feeCents: 0,
+      totalCents: Number.isInteger(result.totalCents) ? Number(result.totalCents) : null,
+      complete: false,
+      tainted: Boolean(result.tainted),
+      currency: "USD",
+      live: true,
+      blocked: Boolean(result.blocked),
+      blockReason: typeof result.blockReason === "string" ? result.blockReason : null,
+      verification: typeof result.verification === "string" ? result.verification : "unverified",
+    };
+  }
+  if (!Number.isInteger(result.totalCents)) return null;
   return {
     vendorId,
     lines,

@@ -114,6 +114,16 @@ test("health, vendor list, mock run, and approval gate", async () => {
   await app.close();
 });
 
+test("public demo pauses after the per-address limit", async () => {
+  const { app } = makeApp({ RATE_LIMIT_RUNS: "1", ALLOW_LIVE_URLS: "true" });
+  const payload = { bomText: "HP 26A toner", mode: "live", vendors: [{ id: "quill" }] };
+  const first = await app.inject({ method: "POST", url: "/api/runs", payload });
+  assert.equal(first.statusCode, 201);
+  const second = await app.inject({ method: "POST", url: "/api/runs", payload });
+  assert.equal(second.statusCode, 429);
+  await app.close();
+});
+
 test("optional demo password gates the api", async () => {
   const { app } = makeApp({ DEMO_PASSWORD: "correct horse" });
   const closed = await app.inject({ method: "GET", url: "/api/vendors" });

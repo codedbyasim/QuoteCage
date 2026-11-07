@@ -2,6 +2,7 @@ import { chromium } from "playwright";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { decideEgress } from "./policy.mjs";
+import { chooseVisiblePrice, detectBlock } from "./live-extract.mjs";
 
 const taskPath = process.argv[2] || "/task/task.json";
 const outDir = process.argv[3] || "/out";
@@ -128,6 +129,9 @@ try {
     download.cancel().catch(() => {});
   });
 
+  if (task.live) {
+    await visitLive(page, task, result);
+  } else {
   log(`open ${task.baseUrl}`);
   await page.goto(task.baseUrl, { waitUntil: "domcontentloaded", timeout: 20000 });
   await collectInjection(page);
@@ -230,7 +234,8 @@ try {
       "Did not navigate to an allowlist miss.",
     );
   }
-  if (egress.length > 0) result.tainted = true;
+  if (!task.live && egress.length > 0) result.tainted = true;
+  }
   log("done");
 } catch (error) {
   result.error = error instanceof Error ? error.message : String(error);
@@ -239,4 +244,81 @@ try {
 } finally {
   writeFileSync(`${outDir}/result.json`, JSON.stringify(result, null, 2));
   if (browser) await browser.close().catch(() => {});
+}
+
+async function visitLive(page, task, result) {
+  const items = (task.items || []).slice(0, 3);
+  const targets = items.length > 0 ? items : [{ name: "Search", query: "", qty: 1, unit: "each", sku: null }];
+  const lines = [];
+  let blocked = null;
+  const singlePage = !task.searchTemplate;
+  for (let index = 0; index < (singlePage ? 1 : targets.length); index += 1) {
+    const item = targets[index];
+    const url = task.searchTemplate
+      ? task.searchTemplate.replaceAll("{query}", encodeURIComponent(item.query || item.name || ""))
+      : task.baseUrl;
+    log(`live open ${url}`);
+    let navError = "";
+    const response = await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 }).catch((error) => {
+      navError = error instanceof Error ? error.message.split("\n")[0] : String(error);
+      return null;
+    });
+    await page.waitForTimeout(2500);
+    const title = await page.title().catch(() => "");
+    const visible = await page.locator("body").innerText().catch(() => "");
+    const status = response ? response.status() : 0;
+    const block = navError && visible.trim().length < 40
+      ? navError.slice(0, 240)
+      : detectBlock(status, title, visible);
+    await shoot(page, `search-${index}.png`, item.name || "Page");
+    if (!result.visibleText) result.visibleText = visible.slice(0, 20000);
+    if (block) {
+      blocked = block;
+      lines.push(emptyLine(item, block));
+      break;
+    }
+    const chosen = chooseVisiblePrice(visible, item.query || item.name || "");
+    lines.push({
+      sku: item.sku || null,
+      name: item.name || item.query || "Item",
+      query: item.query || item.name || "",
+      qty: item.qty || 1,
+      unit: item.unit || "each",
+      stock: "unknown",
+      unitPriceCents: chosen ? chosen.cents : null,
+      lineTotalCents: null,
+      note: chosen ? `${chosen.raw} · ${chosen.basis}` : "No price was visible on the page.",
+      priceText: chosen ? chosen.raw : null,
+    });
+  }
+  result.live = true;
+  result.lines = lines;
+  result.blocked = Boolean(blocked);
+  result.blockReason = blocked;
+  result.totalCents = null;
+  result.subtotalCents = null;
+  result.shippingCents = null;
+  result.feeCents = null;
+  result.fees = [];
+  result.complete = false;
+  result.tainted = false;
+  result.verification = "unverified";
+  result.currency = "USD";
+  result.proposedActions = [];
+  if (blocked) result.error = blocked;
+}
+
+function emptyLine(item, note) {
+  return {
+    sku: item.sku || null,
+    name: item.name || item.query || "Item",
+    query: item.query || item.name || "",
+    qty: item.qty || 1,
+    unit: item.unit || "each",
+    stock: "unknown",
+    unitPriceCents: null,
+    lineTotalCents: null,
+    note,
+    priceText: null,
+  };
 }

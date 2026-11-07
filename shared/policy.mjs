@@ -42,11 +42,20 @@ export function decideEgress(rawUrl, allowHosts) {
   if (host.includes(":") || /^\d+\.\d+\.\d+\.\d+$/.test(host)) {
     return { allow: false, reason: "ip_literal", host };
   }
-  const allow = new Set((allowHosts || []).map((h) => String(h).toLowerCase()));
-  if (!allow.has(host)) {
+  const allowed = (allowHosts || []).some((rule) => hostMatches(host, String(rule)));
+  if (!allowed) {
     return { allow: false, reason: "not_allowlisted", host };
   }
   return { allow: true, reason: "allowlisted", host };
+}
+
+function hostMatches(host, rule) {
+  const name = rule.toLowerCase().replace(/^\*\./, "").replace(/^\./, "");
+  if (!name || name.includes("/") || name.includes("*")) return false;
+  if (rule.startsWith(".") || rule.startsWith("*.")) {
+    return host === name || host.endsWith(`.${name}`);
+  }
+  return host === name;
 }
 
 export function assertEnvEntriesSafe(entries) {

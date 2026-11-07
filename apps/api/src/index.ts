@@ -9,6 +9,8 @@ import { isContactAction } from "../../../shared/policy.mjs";
 import { buildAudit, buildEvidenceZip } from "./audit.js";
 import { emit, subscribe } from "./bus.js";
 import { loadCatalog } from "./catalog.js";
+import { loadRealVendors } from "./live.js";
+import { rfqDraft } from "./live.js";
 import { loadConfig, resolveInferenceMode, type Config } from "./config.js";
 import { createRepository, openDatabase, type Repository } from "./db.js";
 import { presentRun } from "./present.js";
@@ -95,24 +97,40 @@ export function buildApp(deps: AppDeps) {
     return { ok: true };
   });
 
-  app.get("/api/vendors", async () => ({
-    vendors: catalog.vendors.map((vendor) => ({
-      id: vendor.id,
-      name: vendor.name,
-      tagline: vendor.tagline,
-      shippingLabel: vendor.shippingLabel,
-      fixture: true,
-    })),
-    samples: catalog.samples,
-    allowLiveUrls: config.allowLiveUrls,
-  }));
+  app.get("/api/vendors", async () => {
+    const real = loadRealVendors();
+    return {
+      vendors: catalog.vendors.map((vendor) => ({
+        id: vendor.id,
+        name: vendor.name,
+        tagline: vendor.tagline,
+        shippingLabel: vendor.shippingLabel,
+        fixture: true,
+      })),
+      stores: real.stores.map((store) => ({
+        id: store.id,
+        name: store.name,
+        blurb: store.blurb,
+        url: store.url,
+      })),
+      exampleBom: real.exampleBom,
+      samples: catalog.samples,
+      allowLiveUrls: config.allowLiveUrls,
+      rateLimitRuns: config.rateLimitRuns,
+    };
+  });
 
   app.post("/api/runs", async (request, reply) => {
-    const body = request.body as { bomText?: string; vendorIds?: string[]; liveVendors?: { name?: string; url?: string }[] };
+    const body = request.body as { bomText?: string; vendorIds?: string[]; vendors?: { id?: string; name?: string; url?: string }[]; liveVendors?: { name?: string; url?: string }[]; mode?: string };
+    const forwarded = request.headers["x-forwarded-for"];
+    const clientIp = (typeof forwarded === "string" && forwarded ? forwarded.split(",")[0].trim() : request.ip) || "unknown";
     const id = runs.create({
       bomText: String(body?.bomText || ""),
       vendorIds: Array.isArray(body?.vendorIds) ? body.vendorIds.map(String) : [],
+      vendors: Array.isArray(body?.vendors) ? body.vendors : [],
       liveVendors: Array.isArray(body?.liveVendors) ? body.liveVendors : [],
+      mode: body?.mode,
+      clientIp,
     });
     reply.code(201);
     return { id };
@@ -194,7 +212,7 @@ export function buildApp(deps: AppDeps) {
       runId: id,
       vendorId,
       actionType: action,
-      summary: String(body?.summary || `Request a written quote from ${vendor.name}.`).slice(0, 400),
+      summary: rfqDraft(vendor.name, run.plan?.items || []).slice(0, 2000),
       status: "pending" as const,
       source: "buyer",
       createdAt: new Date().toISOString(),

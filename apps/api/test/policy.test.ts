@@ -13,6 +13,9 @@ test("fixture hosts are allowed and everything else is denied", () => {
   assert.equal(decideEgress("http://localhost/api", fixtures).reason, "blocked_host");
   assert.equal(decideEgress("file:///etc/passwd", fixtures).reason, "scheme");
   assert.equal(decideEgress("http://api.vultrinference.com/v1/chat/completions", fixtures).allow, false);
+  assert.equal(decideEgress("https://www.quill.com/search", [".quill.com"]).allow, true);
+  assert.equal(decideEgress("https://notquill.com/", [".quill.com"]).allow, false);
+  assert.equal(decideEgress("https://exfil.evil/collect", [".quill.com", ".gstatic.com"]).allow, false);
 });
 
 test("secret-like environment entries are rejected", () => {

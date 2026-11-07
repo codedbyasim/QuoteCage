@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { catalog } from "../preview";
 import { formatUsd } from "../preview";
@@ -20,11 +20,15 @@ export function Workspace() {
     shippingLabel: vendor.shippingLabel,
     fixture: true,
   })));
-  const [allowLive, setAllowLive] = useState(false);
-  const [bom, setBom] = useState(catalog.samples[0]?.bom || "");
+  const [params] = useSearchParams();
+  const [mode, setMode] = useState<"live" | "safety">(params.get("mode") === "safety" ? "safety" : "live");
+  const [stores, setStores] = useState<{ id: string; name: string; blurb: string; url: string }[]>([]);
+  const [exampleBom, setExampleBom] = useState("HP 26A toner");
+  const [allowLive, setAllowLive] = useState(true);
+  const [bom, setBom] = useState("HP 26A toner");
+  const [selectedStores, setSelectedStores] = useState<string[]>(["quill", "cdw"]);
   const [selected, setSelected] = useState<string[]>(catalog.vendors.map((vendor) => vendor.id));
-  const [liveName, setLiveName] = useState("");
-  const [liveUrl, setLiveUrl] = useState("");
+  const [customUrl, setCustomUrl] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [auth, setAuth] = useState<"loading" | "ok" | "needed">("loading");
@@ -61,12 +65,14 @@ export function Workspace() {
   useEffect(() => {
     if (auth !== "ok") return;
     let cancelled = false;
-    api<{ vendors: VendorOption[]; samples: Sample[]; allowLiveUrls: boolean }>("/api/vendors")
+    api<{ vendors: VendorOption[]; samples: Sample[]; allowLiveUrls: boolean; stores?: { id: string; name: string; blurb: string; url: string }[]; exampleBom?: string }>("/api/vendors")
       .then((body) => {
         if (cancelled) return;
         setVendors(body.vendors);
         setSamples(body.samples);
         setAllowLive(body.allowLiveUrls);
+        if (body.stores && body.stores.length > 0) setStores(body.stores);
+        if (body.exampleBom) setExampleBom(body.exampleBom);
       })
       .catch(() => {
         // The bundled catalog still lets the form render.
@@ -92,10 +98,17 @@ export function Workspace() {
     setFormError(null);
     setSubmitting(true);
     try {
-      const liveVendors = liveUrl.trim() ? [{ name: liveName.trim() || liveUrl.trim(), url: liveUrl.trim() }] : [];
+      const vendors = mode === "live"
+        ? [
+          ...selectedStores.map((id) => ({ id })),
+          ...(customUrl.trim() ? [{ name: "Custom link", url: customUrl.trim() }] : []),
+        ]
+        : [];
       const created = await api<{ id: string }>("/api/runs", {
         method: "POST",
-        body: JSON.stringify({ bomText: bom, vendorIds: selected, liveVendors }),
+        body: JSON.stringify(mode === "live"
+          ? { bomText: bom, mode: "live", vendors }
+          : { bomText: bom, mode: "safety", vendorIds: selected }),
       });
       navigate(`/app/${created.id}`);
     } catch (err) {
@@ -146,47 +159,82 @@ export function Workspace() {
       ) : (
         <form className="composer" onSubmit={start}>
           <div className="section-head">
-            <p className="kicker">Comparison</p>
-            <h1>What are you buying this week?</h1>
+            <p className="kicker">{mode === "live" ? "Step 1 of 3" : "Safety demo"}</p>
+            <h1>{mode === "live" ? "What are you pricing?" : "Watch a hostile page get blocked."}</h1>
+            <p className="helper">{mode === "live"
+              ? "Paste a list, pick public stores, then watch each one open in its own browser. A blocked site stays blank. A price without a vision check is marked unverified."
+              : "These shops are fictional. One of them tries to make the browser email customer data. Use this to see the cage, not to compare real prices."}</p>
           </div>
-          <div className="samples">
-            {samples.map((sample) => (
-              <button key={sample.id} type="button" className={bom === sample.bom ? "chip on" : "chip"} onClick={() => setBom(sample.bom)}>
-                {sample.title}
-              </button>
-            ))}
+          <div className="samples" role="tablist" aria-label="Comparison mode">
+            <button type="button" className={mode === "live" ? "chip on" : "chip"} onClick={() => setMode("live")}>Real stores</button>
+            <button type="button" className={mode === "safety" ? "chip on" : "chip"} onClick={() => setMode("safety")}>Safety demo</button>
           </div>
-          <label htmlFor="bom">Shopping list</label>
-          <textarea id="bom" value={bom} onChange={(event) => setBom(event.target.value)} rows={4} required />
-          <fieldset>
-            <legend>Fixture vendors</legend>
-            <div className="vendor-picks">
-              {vendors.map((vendor) => (
-                <label key={vendor.id} className="pick">
-                  <input
-                    type="checkbox"
-                    checked={selected.includes(vendor.id)}
-                    onChange={() => setSelected((current) => current.includes(vendor.id) ? current.filter((id) => id !== vendor.id) : [...current, vendor.id])}
-                  />
-                  <span>
-                    <strong>{vendor.name}</strong>
-                    <small>{vendor.shippingLabel}</small>
-                  </span>
-                </label>
+          {mode === "live" ? (
+            <button type="button" className="chip" onClick={() => { setBom(exampleBom); setSelectedStores(["quill", "cdw"]); }}>
+              Try “{exampleBom}” on Quill and CDW
+            </button>
+          ) : (
+            <div className="samples">
+              {samples.map((sample) => (
+                <button key={sample.id} type="button" className={bom === sample.bom ? "chip on" : "chip"} onClick={() => setBom(sample.bom)}>
+                  {sample.title}
+                </button>
               ))}
             </div>
-          </fieldset>
-          <details className="live-url">
-            <summary>Optional live URL</summary>
-            <p className="muted">{allowLive ? "The server will add this host to the allowlist for one sandbox." : "The server currently refuses live URLs. Set ALLOW_LIVE_URLS=true to enable one extra host."}</p>
-            <label htmlFor="live-name">Name</label>
-            <input id="live-name" value={liveName} onChange={(event) => setLiveName(event.target.value)} />
-            <label htmlFor="live-url">URL</label>
-            <input id="live-url" type="url" value={liveUrl} onChange={(event) => setLiveUrl(event.target.value)} placeholder="https://" />
-          </details>
+          )}
+          <label htmlFor="bom">Shopping list</label>
+          <textarea id="bom" value={bom} onChange={(event) => setBom(event.target.value)} rows={3} required />
+          <p className="helper">Step 2 — pick up to three real stores, or the fixture shops in the safety demo.</p>
+          {mode === "live" ? (
+            <fieldset>
+              <legend>Real stores</legend>
+              <div className="vendor-picks">
+                {(stores.length > 0 ? stores : [
+                  { id: "quill", name: "Quill", blurb: "Office supplies", url: "https://www.quill.com/" },
+                  { id: "cdw", name: "CDW", blurb: "Business technology", url: "https://www.cdw.com/" },
+                  { id: "ikea", name: "IKEA", blurb: "Furniture", url: "https://www.ikea.com/us/en/" },
+                  { id: "jampaper", name: "JAM Paper", blurb: "Paper and cardstock", url: "https://www.jampaper.com/" },
+                ]).map((store) => (
+                  <label key={store.id} className="pick">
+                    <input
+                      type="checkbox"
+                      checked={selectedStores.includes(store.id)}
+                      onChange={() => setSelectedStores((current) => current.includes(store.id) ? current.filter((id) => id !== store.id) : [...current, store.id].slice(0, 3))}
+                    />
+                    <span>
+                      <strong>{store.name}</strong>
+                      <small>{store.blurb}</small>
+                    </span>
+                  </label>
+                ))}
+              </div>
+              <label htmlFor="custom-url">Or paste one https link</label>
+              <input id="custom-url" type="url" inputMode="url" placeholder="https://www.quill.com/search?keywords=HP+26A" value={customUrl} onChange={(event) => setCustomUrl(event.target.value)} />
+              <p className="helper">{allowLive ? "Only that site, its subdomains, and a few font or storefront hosts are allowed out." : "This server is refusing custom links. Listed stores still run."}</p>
+            </fieldset>
+          ) : (
+            <fieldset>
+              <legend>Fictional fixture shops</legend>
+              <div className="vendor-picks">
+                {vendors.map((vendor) => (
+                  <label key={vendor.id} className="pick">
+                    <input
+                      type="checkbox"
+                      checked={selected.includes(vendor.id)}
+                      onChange={() => setSelected((current) => current.includes(vendor.id) ? current.filter((id) => id !== vendor.id) : [...current, vendor.id])}
+                    />
+                    <span>
+                      <strong>{vendor.name}</strong>
+                      <small>{vendor.shippingLabel}</small>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+          )}
           {formError ? <p className="form-error" role="alert">{formError}</p> : null}
-          <button className="button primary" type="submit" disabled={submitting || selected.length === 0}>
-            {submitting ? "Starting" : "Compare these vendors"}
+          <button className="button primary" type="submit" disabled={submitting || (mode === "live" ? selectedStores.length + (customUrl.trim() ? 1 : 0) === 0 : selected.length === 0)}>
+            {submitting ? "Starting" : mode === "live" ? "Compare these stores" : "Run the safety demo"}
           </button>
         </form>
       )}

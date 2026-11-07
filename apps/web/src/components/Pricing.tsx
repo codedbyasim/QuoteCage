@@ -6,7 +6,7 @@ const TIERS = [
     price: "$0",
     cadence: "planned",
     detail: "For a buyer trying the workflow.",
-    points: ["3 comparisons a month", "Fixture vendors or an allowlist", "Audit JSON"],
+    points: ["3 comparisons a month", "Public stores on an allowlist", "Audit JSON"],
   },
   {
     name: "Pro",

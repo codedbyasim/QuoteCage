@@ -67,7 +67,8 @@ export function openDatabase(path: string) {
       inference_json TEXT,
       recommendation_json TEXT,
       containment_json TEXT,
-      error TEXT
+      error TEXT,
+      client_ip TEXT
     );
     CREATE TABLE IF NOT EXISTS vendor_runs (
       id TEXT PRIMARY KEY,
@@ -115,6 +116,11 @@ export function openDatabase(path: string) {
       note TEXT
     );
   `);
+  try {
+    db.exec("ALTER TABLE runs ADD COLUMN client_ip TEXT");
+  } catch {
+    // The column already exists on databases created with the statement above.
+  }
   return db;
 }
 
@@ -141,6 +147,8 @@ export function createRepository(db: DatabaseSync) {
   const getApprovalStmt = db.prepare(`SELECT * FROM approvals WHERE id = ?`);
   const updateApprovalStmt = db.prepare(`UPDATE approvals SET status = ?, decided_at = ?, note = ? WHERE id = ?`);
   const staleStmt = db.prepare(`UPDATE runs SET status = 'failed', error = ?, updated_at = ? WHERE status IN ('queued', 'planning', 'running')`);
+  const setIpStmt = db.prepare(`UPDATE runs SET client_ip = ? WHERE id = ?`);
+  const countRecentStmt = db.prepare(`SELECT COUNT(*) AS n FROM runs WHERE client_ip = ? AND created_at >= ?`);
 
   function mapRun(row: RunSql): RunRow {
     return {
@@ -298,6 +306,13 @@ export function createRepository(db: DatabaseSync) {
     },
     failStale(message: string) {
       staleStmt.run(message, new Date().toISOString());
+    },
+    setClientIp(id: string, ip: string) {
+      setIpStmt.run(ip, id);
+    },
+    countRecent(ip: string, sinceIso: string) {
+      const row = countRecentStmt.get(ip, sinceIso) as { n: number } | undefined;
+      return Number(row?.n || 0);
     },
   };
 }

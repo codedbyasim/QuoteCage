@@ -5,5 +5,6 @@ COPY sandbox/package.json ./
 RUN npm install --omit=dev
 COPY sandbox/worker.mjs ./
 COPY shared/policy.mjs ./policy.mjs
+COPY shared/live-extract.mjs ./live-extract.mjs
 USER pwuser
 CMD ["node", "worker.mjs"]

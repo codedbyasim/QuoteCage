@@ -24,6 +24,8 @@ export type Config = {
   demoPassword: string;
   cookieSecure: boolean;
   egressProxy: string;
+  rateLimitRuns: number;
+  rateWindowMs: number;
 };
 
 export function parseMemory(value: string): number {
@@ -61,10 +63,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     inferenceBase: (env.VULTR_INFERENCE_BASE_URL || "https://api.vultrinference.com/v1").replace(/\/$/, ""),
     plannerModel: env.VULTR_PLANNER_MODEL || "glm-5.3-flash",
     visionModel: env.VULTR_VISION_MODEL || "glm-5.3-flash",
-    allowLiveUrls: env.ALLOW_LIVE_URLS === "true",
+    allowLiveUrls: env.ALLOW_LIVE_URLS !== "false",
     demoPassword: env.DEMO_PASSWORD || "",
     cookieSecure: env.COOKIE_SECURE === "true",
     egressProxy: env.EGRESS_PROXY || "http://egress:3128",
+    rateLimitRuns: Number(env.RATE_LIMIT_RUNS || 6),
+    rateWindowMs: Number(env.RATE_LIMIT_WINDOW_MS || 60 * 60 * 1000),
   };
 }
 
