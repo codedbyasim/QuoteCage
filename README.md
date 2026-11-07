@@ -127,6 +127,12 @@ docker compose up -d --build
 
 If an older Docker left `iptables-legacy` with a FORWARD policy of DROP, that table still drops packets after iptables-nft has accepted them. Allowlisted store visits then hang on CONNECT while fixture hosts on the same bridge keep working. The setup script sets that legacy policy to ACCEPT when it finds the stale DROP.
 
+### Extra frontend on Vercel
+
+The Vultr VM remains the app: API, Docker sandboxes, fixtures, and egress. Vercel serves only the static UI. The browser calls same-origin `/api`, and `vercel.json` rewrites that to `http://140.82.33.93/api`, including SSE and file downloads, so the page stays on HTTPS.
+
+Project settings, repository root: Install `npm ci`. Build `npm run build -w @quotecage/web`. Output `apps/web/dist`. Framework Vite. No environment variables.
+
 ## Demo script
 
 About two and a half minutes. Stay on the buyer’s job. The timestamps match `docs/demo-script.md`.
